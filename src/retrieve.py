@@ -15,17 +15,17 @@ from src.config import (
 )
 
 
-def retrieve_and_answer(query: str, top_k: int = TOP_K_RESULTS) -> dict:
+def retrieve_and_answer(query: str, top_k: int = TOP_K_RESULTS, active_pdfs: list[str] | None = None) -> dict:
     """Full retrieval + generation pipeline.
 
     1. Embed the query
-    2. Search ChromaDB for top-K results
+    2. Search ChromaDB for top-K results (filtered by active_pdfs)
     3. Resolve UUIDs to raw content
     4. Build multimodal prompt and stream answer from VLM
 
     Returns {answer, retrieved_items}.
     """
-    results = _retrieve(query, top_k)
+    results = _retrieve(query, top_k, active_pdfs)
 
     answer = _generate_answer(query, results)
 
@@ -36,19 +36,22 @@ def retrieve_and_answer(query: str, top_k: int = TOP_K_RESULTS) -> dict:
 
 
 def retrieve_and_answer_stream(
-    query: str, top_k: int = TOP_K_RESULTS
+    query: str, top_k: int = TOP_K_RESULTS, active_pdfs: list[str] | None = None
 ) -> tuple[list[dict], Generator[str, None, None]]:
     """Same as retrieve_and_answer but streams the VLM response.
 
     Returns (retrieved_items, stream_generator).
     """
-    results = _retrieve(query, top_k)
+    results = _retrieve(query, top_k, active_pdfs)
     stream = _generate_answer_stream(query, results)
     return results, stream
 
 
-def _retrieve(query: str, top_k: int) -> list[dict]:
-    """Embed query, search ChromaDB, resolve UUIDs to raw content."""
+def _retrieve(query: str, top_k: int, active_pdfs: list[str] | None = None) -> list[dict]:
+    """Embed query, search ChromaDB, resolve UUIDs to raw content.
+
+    If active_pdfs is provided, filters results to only those PDFs.
+    """
     import chromadb
     from sentence_transformers import SentenceTransformer
 
@@ -65,9 +68,15 @@ def _retrieve(query: str, top_k: int) -> list[dict]:
     client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
     collection = client.get_collection(CHROMA_COLLECTION_NAME)
 
+    # Build where filter for active PDFs
+    where_filter = None
+    if active_pdfs:
+        where_filter = {"source_pdf": {"$in": active_pdfs}}
+
     search_results = collection.query(
         query_embeddings=[query_embedding],
         n_results=top_k,
+        where=where_filter,
     )
 
     retrieved_items = []
@@ -82,6 +91,7 @@ def _retrieve(query: str, top_k: int) -> list[dict]:
             "content": entry["content"],
             "path": entry.get("path"),
             "page": entry.get("page", 0),
+            "source_pdf": entry.get("source_pdf", ""),
             "distance": search_results["distances"][0][i],
         }
 
@@ -155,11 +165,12 @@ def _build_multimodal_messages(query: str, retrieved_items: list[dict]) -> list[
     ]
 
     for item in retrieved_items:
+        source = item.get("source_pdf", "unknown")
         if item["type"] == "text":
-            context_parts.append(f"[Text from page {item['page']}]: {item['content']}")
+            context_parts.append(f"[Text from {source}, page {item['page']}]: {item['content']}")
         elif item["type"] == "image":
             context_parts.append(
-                f"[Diagram from page {item['page']}]: {item['content']}"
+                f"[Diagram from {source}, page {item['page']}]: {item['content']}"
             )
 
     context_text = "\n\n".join(context_parts)

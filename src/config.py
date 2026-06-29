@@ -9,6 +9,7 @@ DATA_DIR = BASE_DIR / "data"
 EXTRACTED_IMAGES_DIR = BASE_DIR / "extracted_images"
 CHROMA_DB_DIR = BASE_DIR / "chroma_db"
 DOCUMENT_STORE_PATH = BASE_DIR / "document_store.json"
+PDF_REGISTRY_PATH = BASE_DIR / "pdf_registry.json"
 
 SAMPLE_PDF_PATH = DATA_DIR / "sample_manual.pdf"
 

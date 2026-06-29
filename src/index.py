@@ -8,6 +8,7 @@ from src.config import (
     CHROMA_DB_DIR,
     CHROMA_COLLECTION_NAME,
     EMBEDDING_MODEL_NAME,
+    PDF_REGISTRY_PATH,
     SILICONFLOW_API_KEY,
     SILICONFLOW_BASE_URL,
     VLM_MODEL_NAME,
@@ -32,6 +33,20 @@ def build_index() -> None:
     print("Generating VLM summaries for extracted images...")
     for uuid_, entry in store.items():
         if entry["type"] == "image" and entry["content"] is None:
+            # Safety check: skip images that are too small for the VLM
+            from PIL import Image as PILImage
+            try:
+                with PILImage.open(entry["path"]) as img:
+                    w, h = img.size
+                if w < 28 or h < 28:
+                    print(f"  Skipping {Path(entry['path']).name} ({w}x{h}) — too small for VLM")
+                    entry["content"] = f"[Image too small to process: {w}x{h}]"
+                    continue
+            except Exception as e:
+                print(f"  Cannot read {entry['path']}: {e}, skipping")
+                entry["content"] = f"[Unable to read image: {e}]"
+                continue
+
             summary = _generate_image_summary(entry["path"])
             entry["content"] = summary
             print(f"  Summarized {Path(entry['path']).name}: {summary[:80]}...")
@@ -130,6 +145,7 @@ def _index_in_chromadb(store: dict) -> None:
             "type": entry["type"],
             "page": entry.get("page", 0),
             "path": entry.get("path") or "",
+            "source_pdf": entry.get("source_pdf", ""),
         })
 
     if ids:
