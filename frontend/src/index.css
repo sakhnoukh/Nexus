@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    background-color: #09090b;
+    color: #d4d4d8;
+    font-family: "Inter", system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #18181b;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #52525b;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-zinc-900 border border-zinc-800;
+  }
+
+  .card {
+    @apply bg-zinc-800 border border-zinc-700/50 rounded;
+  }
+
+  .btn {
+    @apply px-3 py-1.5 text-sm font-medium rounded transition-colors;
+  }
+
+  .btn-primary {
+    @apply bg-cyan-600 hover:bg-cyan-500 text-white;
+  }
+
+  .btn-secondary {
+    @apply bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700;
+  }
+
+  .btn-danger {
+    @apply bg-red-900/50 hover:bg-red-800/60 text-red-400 border border-red-900/50;
+  }
+
+  .input-field {
+    @apply bg-zinc-950 border border-zinc-700 text-zinc-200 placeholder-zinc-600
+           focus:outline-none focus:border-cyan-500 transition-colors;
+  }
+
+  .mono {
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+  }
+}
+
+@keyframes pulse-cyan {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.animate-pulse-cyan {
+  animation: pulse-cyan 1.5s ease-in-out infinite;
+}
+
+.markdown-body h1 {
+  @apply text-lg font-bold text-zinc-100 mt-4 mb-2;
+}
+.markdown-body h2 {
+  @apply text-base font-bold text-zinc-100 mt-3 mb-2;
+}
+.markdown-body h3 {
+  @apply text-sm font-semibold text-zinc-200 mt-2 mb-1;
+}
+.markdown-body p {
+  @apply text-sm text-zinc-300 leading-relaxed my-2;
+}
+.markdown-body ul {
+  @apply list-disc list-inside text-sm text-zinc-300 my-2 space-y-1;
+}
+.markdown-body ol {
+  @apply list-decimal list-inside text-sm text-zinc-300 my-2 space-y-1;
+}
+.markdown-body code {
+  @apply mono text-xs text-cyan-400 bg-zinc-800 px-1 py-0.5 rounded;
+}
+.markdown-body pre {
+  @apply bg-zinc-950 border border-zinc-800 rounded p-3 my-2 overflow-x-auto;
+}
+.markdown-body pre code {
+  @apply bg-transparent p-0;
+}
+.markdown-body table {
+  @apply w-full text-xs text-zinc-300 my-2 border-collapse;
+}
+.markdown-body th {
+  @apply border border-zinc-700 bg-zinc-800 px-2 py-1 text-left font-semibold;
+}
+.markdown-body td {
+  @apply border border-zinc-700 px-2 py-1;
+}
+.markdown-body strong {
+  @apply font-semibold text-zinc-100;
+}
+.markdown-body hr {
+  @apply border-zinc-700 my-4;
+}
