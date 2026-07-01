@@ -1,18 +1,36 @@
 {
-  "Repairability-Snapshot---Framework-Laptop-16.pdf": {
+  "AI Computer Vision Session 2.pdf": {
     "active": true,
-    "element_count": 20
-  },
-  "prusa3d_manual_mk3s_en.pdf": {
-    "active": true,
-    "element_count": 224,
+    "element_count": 85,
     "has_summary": true,
-    "summary_path": "/Users/samiakhnoukh/Documents/Personal Proejcts/multimodal/summaries/prusa3d_manual_mk3s_en.md"
+    "summary_path": "/Users/samiakhnoukh/Documents/Personal Proejcts/multimodal/summaries/AI_Computer_Vision_Session_2.md"
   },
-  "sample_manual.pdf": {
+  "AI Computer Vision Session 3.pdf": {
     "active": true,
-    "element_count": 10,
-    "has_summary": true,
-    "summary_path": "/Users/samiakhnoukh/Documents/Personal Proejcts/multimodal/summaries/sample_manual.md"
+    "element_count": 98
+  },
+  "AI Computer Vision Session 4.pdf": {
+    "active": true,
+    "element_count": 104
+  },
+  "AI Computer Vision Session 5.pdf": {
+    "active": true,
+    "element_count": 126
+  },
+  "AI Computer Vision Session 6.pdf": {
+    "active": true,
+    "element_count": 112
+  },
+  "AI Computer Vision Session 7.pdf": {
+    "active": true,
+    "element_count": 88
+  },
+  "AI Computer Vision Session 8.pdf": {
+    "active": true,
+    "element_count": 148
+  },
+  "AI Computer Vision Session 9.pdf": {
+    "active": true,
+    "element_count": 239
   }
 }
