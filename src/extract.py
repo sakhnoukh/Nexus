@@ -13,31 +13,19 @@ from src.config import (
 )
 
 
-def extract_pdf(pdf_path: Path | None = None) -> list[dict]:
-    """Extract text and images from a PDF using pymupdf.
+def extract_pdf_to_elements(pdf_path: Path) -> list[dict]:
+    """Extract text and images from a PDF without touching the document store.
 
-    Appends to existing document store, removing any prior elements from
-    the same PDF. Tracks source PDF name in each element.
-    Returns the new elements extracted from this PDF.
+    Returns a list of element dicts (each with a 'uuid' key).
+    Safe to call in parallel for different PDFs.
     """
     import fitz
-
-    if pdf_path is None:
-        pdf_path = SAMPLE_PDF_PATH
 
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
     source_name = pdf_path.name
     EXTRACTED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Load existing store and remove old elements from this PDF
-    # Also clean up legacy entries (no source_pdf) from the old single-PDF format
-    store = _load_document_store()
-    store = {
-        k: v for k, v in store.items()
-        if v.get("source_pdf") not in (None, "", source_name)
-    }
 
     doc = fitz.open(str(pdf_path))
     new_elements = []
@@ -58,7 +46,6 @@ def extract_pdf(pdf_path: Path | None = None) -> list[dict]:
                     "page": page_num + 1,
                     "source_pdf": source_name,
                 }
-                store[elem_id] = entry
                 new_elements.append({**entry, "uuid": elem_id})
 
         # Extract images (skip tiny images that VLM can't process)
@@ -100,19 +87,53 @@ def extract_pdf(pdf_path: Path | None = None) -> list[dict]:
                 "page": page_num + 1,
                 "source_pdf": source_name,
             }
-            store[elem_id] = entry
             new_elements.append({**entry, "uuid": elem_id})
 
     doc.close()
-
-    # Save updated store
-    _save_document_store(store)
-    _update_pdf_registry(source_name, len(new_elements))
 
     text_count = sum(1 for e in new_elements if e["type"] == "text")
     image_count = sum(1 for e in new_elements if e["type"] == "image")
     print(f"Extraction complete for {source_name}: {text_count} text chunks, {image_count} images")
     return new_elements
+
+
+def merge_elements_into_store(elements_by_pdf: dict[str, list[dict]]) -> None:
+    """Merge extracted elements from multiple PDFs into the document store.
+
+    Removes any prior elements for the same PDFs, then adds the new ones.
+    Saves the store and updates the registry in a single pass.
+    """
+    store = _load_document_store()
+
+    # Remove old elements for all re-extracted PDFs
+    for source_name in elements_by_pdf:
+        store = {
+            k: v for k, v in store.items()
+            if v.get("source_pdf") not in (None, "", source_name)
+        }
+
+    # Add new elements
+    for source_name, elements in elements_by_pdf.items():
+        for elem in elements:
+            uuid_ = elem["uuid"]
+            store[uuid_] = {k: v for k, v in elem.items() if k != "uuid"}
+        _update_pdf_registry(source_name, len(elements))
+
+    _save_document_store(store)
+
+
+def extract_pdf(pdf_path: Path | None = None) -> list[dict]:
+    """Extract text and images from a PDF and update the document store.
+
+    Wrapper around extract_pdf_to_elements for backwards compatibility
+    (single PDF, sequential store update).
+    """
+    if pdf_path is None:
+        pdf_path = SAMPLE_PDF_PATH
+
+    elements = extract_pdf_to_elements(pdf_path)
+    merge_elements_into_store({pdf_path.name: elements})
+    return elements
 
 
 def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:

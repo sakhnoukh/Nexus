@@ -1,5 +1,7 @@
 import json
 import base64
+import time
+import threading
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
@@ -17,8 +19,55 @@ from src.config import (
     VLM_SUMMARY_PROMPT,
 )
 
-VLM_CONCURRENCY = 5
+VLM_CONCURRENCY = 10
 VLM_SAVE_INTERVAL = 10
+
+VLM_TPM_LIMIT = 35000  # Safety margin under 40k TPM
+VLM_ESTIMATED_TOKENS_PER_CALL = 1200  # ~700 image + ~50 prompt + ~450 output
+VLM_MAX_RETRIES = 3
+VLM_RETRY_BASE_DELAY = 1.0  # seconds
+
+_embedder = None
+_embedder_lock = threading.Lock()
+
+
+def _get_embedder():
+    """Cache and return a singleton SentenceTransformer instance."""
+    global _embedder
+    if _embedder is None:
+        with _embedder_lock:
+            if _embedder is None:
+                from sentence_transformers import SentenceTransformer
+                print(f"  Loading embedding model: {EMBEDDING_MODEL_NAME}")
+                _embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    return _embedder
+
+
+class TPMRateLimiter:
+    """Sliding-window rate limiter for tokens-per-minute budgets."""
+
+    def __init__(self, tpm_limit: int, estimated_tokens: int):
+        self.tpm_limit = tpm_limit
+        self.estimated_tokens = estimated_tokens
+        self._timestamps: list[float] = []
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        """Block until a token budget slot is available."""
+        while True:
+            with self._lock:
+                now = time.time()
+                cutoff = now - 60.0
+                self._timestamps = [t for t in self._timestamps if t > cutoff]
+                current_tpm = len(self._timestamps) * self.estimated_tokens
+                if current_tpm + self.estimated_tokens <= self.tpm_limit:
+                    self._timestamps.append(now)
+                    return
+                # Calculate how long to wait for the oldest entry to expire
+                oldest = self._timestamps[0]
+                wait = oldest + 60.0 - now + 0.1
+            print(f"  TPM rate limit reached ({current_tpm}/{self.tpm_limit}), waiting {wait:.1f}s...")
+            time.sleep(wait)
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
 
@@ -67,7 +116,6 @@ def incremental_index(progress_callback: ProgressCallback = None) -> int:
 
     # Phase 2: Get existing UUIDs from ChromaDB, only add new ones
     import chromadb
-    from sentence_transformers import SentenceTransformer
 
     if progress_callback:
         progress_callback(0, 1, "Connecting to ChromaDB...")
@@ -120,10 +168,8 @@ def incremental_index(progress_callback: ProgressCallback = None) -> int:
     if progress_callback:
         progress_callback(0, len(new_ids), f"Embedding {len(new_ids)} new elements...")
 
-    print(f"  Loading embedding model: {EMBEDDING_MODEL_NAME}")
-    embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
-
     print(f"  Batch embedding {len(new_ids)} new elements...")
+    embedder = _get_embedder()
     embeddings = embedder.encode(
         new_texts,
         normalize_embeddings=True,
@@ -173,8 +219,9 @@ def _generate_vlm_summaries(store: dict, progress_callback: ProgressCallback = N
             progress_callback(1, 1, "No images need summarizing.")
         return
 
-    print(f"  {len(pending)} images to summarize with {VLM_CONCURRENCY} concurrent workers...")
+    print(f"  {len(pending)} images to summarize with {VLM_CONCURRENCY} concurrent workers (TPM limit: {VLM_TPM_LIMIT})...")
     client = _get_vlm_client()
+    rate_limiter = TPMRateLimiter(VLM_TPM_LIMIT, VLM_ESTIMATED_TOKENS_PER_CALL)
     completed = 0
     total = len(pending)
 
@@ -183,7 +230,7 @@ def _generate_vlm_summaries(store: dict, progress_callback: ProgressCallback = N
 
     with ThreadPoolExecutor(max_workers=VLM_CONCURRENCY) as executor:
         futures = {
-            executor.submit(_generate_image_summary, path, client): (uuid_, path)
+            executor.submit(_generate_image_summary, path, client, rate_limiter): (uuid_, path)
             for uuid_, path in pending
         }
         for future in as_completed(futures):
@@ -214,8 +261,11 @@ def _get_vlm_client():
     return OpenAI(api_key=SILICONFLOW_API_KEY, base_url=SILICONFLOW_BASE_URL)
 
 
-def _generate_image_summary(image_path: str, client=None) -> str:
-    """Send image to Qwen-VL via SiliconFlow and get a text description."""
+def _generate_image_summary(image_path: str, client=None, rate_limiter: 'TPMRateLimiter' = None) -> str:
+    """Send image to Qwen-VL via SiliconFlow and get a text description.
+
+    Includes TPM-aware rate limiting and retry with exponential backoff.
+    """
     if client is None:
         client = _get_vlm_client()
 
@@ -226,42 +276,54 @@ def _generate_image_summary(image_path: str, client=None) -> str:
     mime_map = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp"}
     mime = mime_map.get(ext, "jpeg")
 
-    response = client.chat.completions.create(
-        model=VLM_MODEL_NAME,
-        messages=[
-            {
-                "role": "user",
-                "content": [
+    last_error = None
+    for attempt in range(VLM_MAX_RETRIES):
+        if rate_limiter:
+            rate_limiter.acquire()
+        try:
+            response = client.chat.completions.create(
+                model=VLM_MODEL_NAME,
+                messages=[
                     {
-                        "type": "text",
-                        "text": VLM_SUMMARY_PROMPT,
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/{mime};base64,{image_data}"
-                        },
-                    },
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": VLM_SUMMARY_PROMPT,
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/{mime};base64,{image_data}"
+                                },
+                            },
+                        ],
+                    }
                 ],
-            }
-        ],
-        max_tokens=512,
-        temperature=0.1,
-    )
+                max_tokens=512,
+                temperature=0.1,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            last_error = e
+            if attempt < VLM_MAX_RETRIES - 1:
+                delay = VLM_RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"  VLM call failed (attempt {attempt + 1}/{VLM_MAX_RETRIES}): {e}, retrying in {delay:.1f}s...")
+                time.sleep(delay)
+            else:
+                print(f"  VLM call failed after {VLM_MAX_RETRIES} attempts: {e}")
 
-    return response.choices[0].message.content.strip()
+    raise last_error
 
 
 def _index_in_chromadb(store: dict, progress_callback: ProgressCallback = None) -> None:
     """Embed all elements and index in ChromaDB with UUID metadata."""
     import chromadb
-    from sentence_transformers import SentenceTransformer
 
     CHROMA_DB_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Load embedding model
-    print(f"  Loading embedding model: {EMBEDDING_MODEL_NAME}")
-    embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    # Load embedding model (cached)
+    embedder = _get_embedder()
 
     # Initialize ChromaDB
     client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))

@@ -15,7 +15,7 @@ from src.config import (
     CHROMA_DB_DIR,
     DOCUMENT_STORE_PATH,
 )
-from src.extract import extract_pdf, remove_pdf, get_pdf_registry
+from src.extract import extract_pdf, extract_pdf_to_elements, merge_elements_into_store, remove_pdf, get_pdf_registry
 from src.index import build_index, incremental_index
 from src.retrieve import retrieve_and_answer_stream
 from src.summarize import (
@@ -144,13 +144,30 @@ async def upload_pdfs(files: list[UploadFile] = File(...)):
             "registry": _load_registry(),
         }
 
-    # Extract each new PDF (blocking — run in thread pool)
-    for pdf_name in new_pdfs:
+    # Extract all new PDFs in parallel (4 workers), then merge into store once
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _extract_one(pdf_name: str) -> tuple[str, list[dict]]:
         pdf_path = DATA_DIR / pdf_name
-        try:
-            await asyncio.to_thread(extract_pdf, pdf_path)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Extraction failed for {pdf_name}: {e}")
+        elements = extract_pdf_to_elements(pdf_path)
+        return pdf_name, elements
+
+    elements_by_pdf: dict[str, list[dict]] = {}
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(_extract_one, name): name for name in new_pdfs}
+            for future in as_completed(futures):
+                pdf_name = futures[future]
+                try:
+                    name, elements = future.result()
+                    elements_by_pdf[name] = elements
+                except Exception as e:
+                    raise HTTPException(status_code=500, detail=f"Extraction failed for {pdf_name}: {e}")
+    except HTTPException:
+        raise
+
+    # Single merge into document store
+    await asyncio.to_thread(merge_elements_into_store, elements_by_pdf)
 
     # Incremental index (blocking — run in thread pool)
     try:
